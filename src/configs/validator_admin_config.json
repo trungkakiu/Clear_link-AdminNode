@@ -1,0 +1,53 @@
+{
+  "node_id": "",
+  "node_type": "validator",
+  "role": "general_validator",
+
+  "meta_gateway": {
+    "http_url": "http://192.168.1.5:5099",
+    "ws_url": "ws://192.168.1.5:5099"
+  },
+
+  "network": {
+    "public_ip": "",
+    "local_ip": "",
+    "port_http": 5101,
+    "port_ws": 5102
+  },
+
+  "hardware": {
+    "cpu": "",
+    "cpu_core": 0,
+    "ram_gb": 0,
+    "gpu_name": "",
+    "gpu_vram_gb": 0
+  },
+
+  "security": {
+    "public_key": "",
+    "private_key": "",
+    "auto_generate_keypair": true
+  },
+
+  "storage": {
+    "db_path": "data/validator_db",
+    "db_type": "mysql_db",
+    "max_log_size_mb": 10000,
+    "max_block_cache_mb": 51200
+  },
+
+  "validator": {
+    "stake": 0,
+    "auto_stake": true,
+    "sync_on_start": true,
+    "heartbeat_interval": 3000
+  },
+
+  "system": {
+    "auto_start": true,
+    "log_level": "info",
+    "log_path": "logs/validator.log"
+  },
+
+  "first_run": true
+}

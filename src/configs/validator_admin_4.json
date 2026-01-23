@@ -1,0 +1,22 @@
+{
+  "id": "ADMIN_004",
+  "port": 6004,
+  "address": "http://localhost:6004",
+  "db": {
+    "name": "admin_node_db004",
+    "user": "root",
+    "pass": "123456",
+    "host": "localhost",
+    "port": 5004
+  },
+  "node_id": "ADMIN_NODE_728867",
+  "network": {
+    "local_ip": "172.23.0.7",
+    "public_ip": "42.115.143.178"
+  },
+  "security": {
+    "public_key": "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAmVnrPtJ3QN+DCaySlFH3\n/wgMzcle7ohfOJhtEZ9KTfvI5LIpYfkynnS270P9UeCn2b7XCRy3MuVgIqwhByMK\nJIfT8Qf5/PwLVevnhsa8mcHPNM8ZV0XYC/Ijj8B3IRqNKT6K2i2uoY+q+5sFCRVt\nTMPNEtnSU+2/i/ZuqGSho9OO6ofxHV2RSPToEADD3UZwF+yVks0yCIuoGxLqMQ1x\nWS3D1saLj6In69HzuyvXa7IxOzWL+hXHEWFsZI4gGe3DMp7TGhzgluDS+ph61KZR\nkvuJhcc3bjvBf6w3FclfRjeelVQlfKcxSJNEqHKtE/MDt5phr/NwE7jma8A+O5La\nUQIDAQAB\n-----END PUBLIC KEY-----\n",
+    "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQCZWes+0ndA34MJ\nrJKUUff/CAzNyV7uiF84mG0Rn0pN+8jksilh+TKedLbvQ/1R4KfZvtcJHLcy5WAi\nrCEHIwokh9PxB/n8/AtV6+eGxryZwc80zxlXRdgL8iOPwHchGo0pPoraLa6hj6r7\nmwUJFW1Mw80S2dJT7b+L9m6oZKGj047qh/EdXZFI9OgQAMPdRnAX7JWSzTIIi6gb\nEuoxDXFZLcPWxouPoifr0fO7K9drsjE7NYv6FccRYWxkjiAZ7cMyntMaHOCW4NL6\nmHrUplGS+4mFxzduO8F/rDcVyV9GN56VVCV8pzFIk0Socq0T8wO3mmGv83ATuOZr\nwD47ktpRAgMBAAECggEAGIBUZMItyZCsmBQZi1cZX4cCvLJq14O0aw93hbREo/cR\nnvCUShINs2GEhPAA/l79kn26T7tlzdz2IjQMRt6jVTjadQ1INNJ0YTMC1/bS1WIw\n4AgizV3cafQzGFmw7voWCbvzZW6dEzUoJXEcOdpRj01Na7CfuUcoLo2eGouRg+If\nB82iB23wwBxYNtGqDbPYz7/ZfDjfBRizr4QIH7U1z6LObehSKgVHPNu4Wyu7rVGe\nZ4aHEsQjadIO+tBhSOQpxXHZr5TL3SHtUoJ0j3o/7+qcEOfFYnbQ4aZDXifCnKJA\n1kCWXSjC0G6yXTaUSP9FDST8QduS0Kgmp2/zSRdtPQKBgQDHKnOLXrv5wKkKt+Jy\npX0tz97uEVQoJwFyln8R8auSSrvxb6V8/Zm6/Lng1C97IZK2Mp1cfHfzSQaks7pl\n31dOWqrgkqCLV4NGILIPHR2mfN9TRJ+FK+EhDBkiO1hVpnUWvOXvj0NSU2gnCbyb\nQvSaT/joIS/aavTlGSLfollvJwKBgQDFHJnXYTCccf88M0cNMXsb6D9/wDLqGUoJ\ngVtzba33e/VtKzAEg4YuosqXZCjoyy3jNHssy08AQWMx+KweVreLIC7XL29XCLQo\n9+2hoKFZ44/URuFHEkJKxcqN/DnpdvVrveS/CmIJtp3hv3L4hcbW03jbKOpw9Nmi\nbH2qqB7VxwKBgHI0eYUVkZypSUWIJCWxl5JJfH/vF97eXwoiGkNj3QpKKHNNnguK\nMDj06nFturxUiBhJ9cou5WlwGosfNGduJlYbz5hu+/hq+i+gV/oqq/Hn8PeChiaK\n/tFAarkiZojWppWfRAqWj/gJM9QO1UQCpNhHu2cAgLwyULN+Mm0iXz5JAoGBAJ8M\nCfJpQMErlshrk8xIfc6x4vLhEfQk/cGXuEP2XyZPxmQVMgSiX9YnkxL/Rac5ssgf\nI7isQA2ztSewQKmmTSmciU8mvk9a/YwFKaB+LVOLtBWUL9iaGhWdbWiN+eixDSyn\np/iilyLBULnEMi/oOd5D+sPUSv9kAmv14JygVWknAoGAHFRAfzft0AmY/+Ql+F9h\nOlMNJ2UV9v66CC2/HoBxGtEJq0CGLGABSdHgCoSdjXfy64t1eRUtkjDw8E/4y6lb\n4dg4lbE6pXasTg59mWtX/7cpXf6u3VBFmHyo3t0PN8q4v+Nig2vTTmsLg/hMr+Iw\n/JVEUatqHUDFIvS6XcLpcsQ=\n-----END PRIVATE KEY-----\n"
+  },
+  "first_run": false
+}

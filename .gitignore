@@ -1,0 +1,21 @@
+# Node
+node_modules/
+.env
+
+# VSCode
+.vscode/
+
+# Docker runtime data
+docker/data/
+docker/**/data/
+docker/**/mysql.sock
+docker/**/ib_*
+docker/**/binlog*
+docker/**/auto.cnf
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db

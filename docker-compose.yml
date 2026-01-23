@@ -1,0 +1,88 @@
+services:
+  mysql_admin_1:
+    image: mysql:8.0
+    container_name: mysql_admin_1
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: admin_node_db001
+    volumes:
+      - ./docker/data/admin_db1:/var/lib/mysql
+    ports:
+      - "5001:3306"
+    networks:
+      - validator_net
+
+  mysql_admin_2:
+    image: mysql:8.0
+    container_name: mysql_admin_2
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: admin_node_db002
+    volumes:
+      - ./docker/data/admin_db2:/var/lib/mysql
+    ports:
+      - "5002:3306"
+    networks:
+      - validator_net
+
+  mysql_admin_3:
+    image: mysql:8.0
+    container_name: mysql_admin_3
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: admin_node_db003
+    volumes:
+      - ./docker/data/admin_db3:/var/lib/mysql
+    ports:
+      - "5003:3306"
+    networks:
+      - validator_net
+
+  mysql_admin_4:
+    image: mysql:8.0
+    container_name: mysql_admin_4
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: admin_node_db004
+    volumes:
+      - ./docker/data/admin_db4:/var/lib/mysql
+    ports:
+      - "5004:3306"
+    networks:
+      - validator_net
+
+  mysql_admin_5:
+    image: mysql:8.0
+    container_name: mysql_admin_5
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: admin_node_db005
+    volumes:
+      - ./docker/data/admin_db5:/var/lib/mysql
+    ports:
+      - "5005:3306"
+    networks:
+      - validator_net
+
+  mysql_admin_6:
+    image: mysql:8.0
+    container_name: mysql_admin_6
+    restart: always
+    environment:
+      MYSQL_ROOT_PASSWORD: 123456
+      MYSQL_DATABASE: admin_node_db006
+    volumes:
+      - ./docker/data/admin_db6:/var/lib/mysql
+    ports:
+      - "5006:3306"
+    networks:
+      - validator_net
+
+networks:
+  validator_net:
+    driver: bridge
