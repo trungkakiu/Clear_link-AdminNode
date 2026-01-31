@@ -9,6 +9,10 @@ export default (sequelize, DataTypes) => {
         autoIncrement: true,
         primaryKey: true,
       },
+      headerRaw: {
+        type: DataTypes.BLOB("long"),
+        allowNull: false,
+      },
       Height: {
         type: DataTypes.INTEGER,
         unique: true,
@@ -67,7 +71,7 @@ export default (sequelize, DataTypes) => {
       tableName: "Block",
       timestamps: true,
       underscored: false,
-    }
+    },
   );
 
   return Block;

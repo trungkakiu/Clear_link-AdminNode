@@ -30,7 +30,7 @@ export default async function loadValidatorDB(configPath) {
       port: nodeConfig.db.port,
       dialect: "mysql",
       logging: false,
-    }
+    },
   );
 
   const db = {};
@@ -42,7 +42,7 @@ export default async function loadValidatorDB(configPath) {
       (file) =>
         file.endsWith(".js") &&
         file !== path.basename(__filename) &&
-        !file.endsWith(".test.js")
+        !file.endsWith(".test.js"),
     );
 
   for (const file of files) {

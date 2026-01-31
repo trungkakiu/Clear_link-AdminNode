@@ -4,6 +4,7 @@ class NodeModeManager {
   constructor() {
     this.mode = "active";
     this.session_id = null;
+    this.requestId = null;
   }
 
   async setMode(newMode, db) {
@@ -28,7 +29,14 @@ class NodeModeManager {
     this.session_id = session_id;
   }
 
-  getSessionId() {
+  async setrequestId(requestId) {
+    this.requestId = requestId;
+  }
+
+  async getrequestId() {
+    return this.requestId;
+  }
+  async getSessionId() {
     return this.session_id;
   }
 

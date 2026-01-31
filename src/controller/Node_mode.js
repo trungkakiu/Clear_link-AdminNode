@@ -13,6 +13,7 @@ const syncBlocks = async (db) => {
     if (runtimeState._coolDownUntil && now < runtimeState._coolDownUntil) {
       return wsGateway.send({
         type: "client_log",
+        sessionId: nodeModeManager.getSessionId(),
         nodeId: node_info.node_id,
         message: "cooldown active",
       });
@@ -20,6 +21,7 @@ const syncBlocks = async (db) => {
     if (now - runtimeState._lastSyncAttemptAt < 10000) {
       return wsGateway.send({
         type: "client_log",
+        sessionId: nodeModeManager.getSessionId(),
         nodeId: node_info.node_id,
         message: "sync too frequent",
       });
@@ -28,6 +30,7 @@ const syncBlocks = async (db) => {
     if (runtimeState._isSendSyncRequest) {
       return wsGateway.send({
         type: "client_log",
+        sessionId: nodeModeManager.getSessionId(),
         nodeId: node_info.node_id,
         message: "sync already in flight",
       });
@@ -57,6 +60,7 @@ const syncBlocks = async (db) => {
     console.error(error);
     wsGateway.send({
       type: "client_log",
+      sessionId: nodeModeManager.getSessionId(),
       pos: "syncBlocks",
       message: error,
     });
@@ -68,7 +72,7 @@ const ActiveMode = async (db) => {
     const node_info = await db.Node_Info.findOne({ where: { id: 1 } });
     const latest_block = await api_controller.get_latest_block(db);
 
-    const session_id = nodeModeManager.getSessionId();
+    const session_id = await nodeModeManager.getSessionId();
 
     if (!session_id) {
       console.warn("[ActiveMode] sessionId not ready, skip heartbeat");
@@ -99,6 +103,7 @@ const Forkmode = async (db) => {
     ) {
       return wsGateway.send({
         type: "client_log",
+        sessionId: nodeModeManager.getSessionId(),
         nodeId: node_info.node_id,
         message: "cooldown active",
       });
@@ -107,15 +112,18 @@ const Forkmode = async (db) => {
     if (now - runtimeStateFork._lastSyncAttemptAt < 10_000) {
       return wsGateway.send({
         type: "client_log",
+        sessionId: nodeModeManager.getSessionId(),
         nodeId: node_info.node_id,
         message: "fork too frequent",
       });
     }
 
     if (runtimeStateFork._isSendSyncRequest) {
+      console.log(nodeModeManager.getSessionId());
       return wsGateway.send({
         type: "client_log",
         nodeId: node_info.node_id,
+        sessionId: nodeModeManager.getSessionId(),
         message: "fork already in flight",
       });
     }
@@ -126,6 +134,7 @@ const Forkmode = async (db) => {
       return wsGateway.send({
         type: "client_log",
         nodeId: node_info.node_id,
+        sessionId: nodeModeManager.getSessionId(),
         message: "retry limit reached",
       });
     }
@@ -137,6 +146,7 @@ const Forkmode = async (db) => {
       return wsGateway.send({
         type: "client_log",
         nodeId: node_info.node_id,
+        sessionId: nodeModeManager.getSessionId(),
         message: archor_block.message,
       });
     }
@@ -146,6 +156,7 @@ const Forkmode = async (db) => {
       return wsGateway.send({
         type: "client_log",
         nodeId: node_info.node_id,
+        sessionId: nodeModeManager.getSessionId(),
         message: "latest_block not found",
       });
     }
@@ -163,6 +174,7 @@ const Forkmode = async (db) => {
     wsGateway.send({
       type: "client_log",
       pos: "Forkmode",
+      sessionId: nodeModeManager.getSessionId(),
       error: error,
     });
   }
@@ -197,12 +209,14 @@ const ForkMaintenance = async (db, forkpoint) => {
       type: "client_log",
       pos: "Forkmode",
       error: error,
+      sessionId: nodeModeManager.getSessionId(),
     });
     return false;
   }
 };
+
 const MaintenancMode = async (db) => {
-  const requestId = `${Date.now()}_${Math.random().toString(16).slice(2)}`;
+  let requestId = await nodeModeManager.getrequestId();
   const tag = `[MAINT:${requestId}]`;
 
   const log = (...args) => console.log(tag, ...args);
@@ -220,7 +234,7 @@ const MaintenancMode = async (db) => {
         status: "ENDED",
         pos: "ForkMaintenance",
         message: "Node are trying ForkMaintenance",
-        requestId,
+        requestId: requestId,
       });
       return false;
     }
@@ -229,9 +243,9 @@ const MaintenancMode = async (db) => {
       type: "Maintenance_responese",
       ok: true,
       status: "STARTED",
-      sessionId: nodeModeManager.getSessionId(),
+      sessionId: await nodeModeManager.getSessionId(),
       message: "Maintenance started",
-      requestId,
+      requestId: requestId,
     });
 
     const BATCH = 1000;
@@ -269,9 +283,10 @@ const MaintenancMode = async (db) => {
           errLog("recomputeBlockHash failed at height", b.Height, e);
           wsGateway.send({
             type: "fork_maintenance_response",
+            sessionId: await nodeModeManager.getSessionId(),
             ok: false,
             message: `Maintenance error: recompute failed at ${b.Height}`,
-            requestId,
+            requestId: requestId,
           });
           return;
         }
@@ -319,6 +334,7 @@ const MaintenancMode = async (db) => {
                 : "Maintenance down not complete",
               requestId,
               status: "ENDED",
+              sessionId: await nodeModeManager.getSessionId(),
               reason: "PREV_HASH_MISMATCH",
               atHeight: b.Height,
             });
@@ -342,6 +358,7 @@ const MaintenancMode = async (db) => {
                 ? "Maintenance down complete"
                 : "Maintenance down not complete",
               requestId,
+              sessionId: await nodeModeManager.getSessionId(),
               status: "ENDED",
               reason: "HASH_MISMATCH",
               atHeight: b.Height,
@@ -366,7 +383,7 @@ const MaintenancMode = async (db) => {
       type: "fork_maintenance_response",
       ok: true,
       status: "ENDED",
-      sessionId: nodeModeManager.getSessionId(),
+      sessionId: await nodeModeManager.getSessionId(),
       message: "Maintenance complete with no fork",
       requestId,
     });

@@ -2,6 +2,7 @@ import {
   runtimeState,
   runtimeStateFork,
 } from "../../validator_admin_server.mjs";
+import { session_id } from "../../ws_client.js";
 
 import api_controller from "./api_controller.js";
 import nodeModeManager from "./Node_mode_state.js";
@@ -39,6 +40,7 @@ export const Maintenance_route_ws = async (msg, ws, db, node_info) => {
     ws.send(
       JSON.stringify({
         type: "client_log",
+        sessionId: nodeModeManager.getSessionId(),
         command: `[ERROR] - [${node_info.node_id}]`,
         error: error,
       }),
@@ -97,6 +99,7 @@ export const Public_route_ws = async (msg, ws, db, node_info) => {
         );
         return;
       }
+      console.log("sessionId: ", sessionId);
       await nodeModeManager.setSessionId(sessionId);
       await nodeModeManager.setMode(nextMode, db);
       return;
@@ -106,7 +109,7 @@ export const Public_route_ws = async (msg, ws, db, node_info) => {
     ws.send(
       JSON.stringify({
         type: "client_log",
-        sessionId: session_id,
+        sessionId: nodeModeManager.getSessionId(),
         command: `[ERROR] - [${node_info.node_id}]`,
         error: error,
       }),
@@ -116,10 +119,11 @@ export const Public_route_ws = async (msg, ws, db, node_info) => {
 
 export const Active_route_ws = async (msg, ws, db, node_info) => {
   try {
-    const session_id_current = nodeModeManager.getSessionId();
-    console.log("command: ", msg);
+    const session_id_current = msg.sessionId;
+    console.log("session_id_current: ", session_id_current);
     if (msg.type === "Maintenance") {
       console.log("call maintenance");
+      await nodeModeManager.setrequestId(msg.requestId);
       if (nodeModeManager.is("active")) {
         try {
           const modestate = await nodeModeManager.setMode("maintenance", db);
@@ -177,6 +181,64 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
         return;
       }
 
+      if (msg.command == "drop_product") {
+        const product_list = msg.payload.approvedIds;
+        let drop_map = [];
+        for (const p of product_list) {
+          const res = await api_controller.drop_block_by_id_type_status(db)(
+            p,
+            "product_create",
+            "active",
+          );
+          console.log(res);
+          drop_map.push({
+            block_id: p,
+            state: res,
+          });
+        }
+
+        return await ws.send(
+          JSON.stringify({
+            type: "drop_response",
+            voteRoundId: msg.voteRoundId,
+            sessionId: msg.sessionId,
+            nodeId: node_info.node_id,
+            dropstate: {
+              drop_map,
+            },
+            serverTime: Date.now(),
+          }),
+        );
+      }
+
+      if (msg.command == "drop_precheck_vote") {
+        const product_list = msg.payload.products;
+        const res = await api_controller.drop_vote(db)(product_list);
+        const canonicalVotes = [...res.RD]
+          .sort((a, b) => a.product_id.localeCompare(b.product_id))
+          .map((v) => ({
+            product_id: v.product_id,
+            approve: v.approve,
+            reason: v.reason,
+          }));
+
+        const signature =
+          await api_controller.signature_rawdata(canonicalVotes);
+        return await ws.send(
+          JSON.stringify({
+            type: "drop_precheck_vote_ack",
+            voteRoundId: msg.voteRoundId,
+            sessionId: msg.sessionId,
+            nodeId: node_info.node_id,
+            votePayload: {
+              votes: res.RD,
+            },
+            signature: signature,
+            serverTime: Date.now(),
+          }),
+        );
+      }
+
       if (msg.command == "get_vote") {
         let res = null;
         const requestId = msg.requestId;
@@ -194,7 +256,7 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
 
         await ws.send(
           JSON.stringify({
-            sessionId: session_id_current,
+            sessionId: msg.sessionId,
             type: "vote_response",
             command: "vote_result",
             requestId: requestId,
@@ -242,7 +304,8 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
           return await ws.send(
             JSON.stringify({
               type: "pair_product_response",
-              sessionId: session_id_current,
+              nodeId: node_info.node_id,
+              sessionId: msg.sessionId,
               requestId: msg.requestId,
               ok: false,
               message: "payload missing",
@@ -263,8 +326,9 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
           await ws.send(
             JSON.stringify({
               type: "pair_product_response",
+              nodeId: node_info.node_id,
               requestId: msg.requestId,
-              sessionId: session_id_current,
+              sessionId: msg.sessionId,
               ok: res.ok,
               block: res,
               time: Date.now(),
@@ -276,6 +340,7 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
               type: "pair_product_response",
               sessionId: session_id_current,
               requestId: msg.requestId,
+              nodeId: node_info.node_id,
               ok: false,
               block: "",
               time: Date.now(),
@@ -300,6 +365,7 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
             JSON.stringify({
               type: "pair_user_response",
               sessionId: session_id_current,
+              nodeId: node_info.node_id,
               requestId: msg.requestId,
               ok: res.ok,
               block: res,
@@ -311,6 +377,7 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
             JSON.stringify({
               type: "pair_product_response",
               sessionId: session_id_current,
+              nodeId: node_info.node_id,
               requestId: msg.requestId,
               ok: false,
               block: "",
@@ -358,6 +425,7 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
 export const Fork_route_ws = async (msg, ws, db, node_info) => {
   try {
     if (msg.type === "fork_response") {
+      const sessionId = msg.sessionId;
       const ok = msg.ok;
       const status = nodeModeManager.getMode();
       if (!ok) {
@@ -367,7 +435,7 @@ export const Fork_route_ws = async (msg, ws, db, node_info) => {
         return await ws.send(
           JSON.stringify({
             type: "client_log",
-            sessionId: nodeModeManager.getSessionId(),
+            sessionId: sessionId,
             nodeId: node_info.node_id,
             error: "fork response not ok!",
           }),
@@ -380,7 +448,7 @@ export const Fork_route_ws = async (msg, ws, db, node_info) => {
         return await ws.send(
           JSON.stringify({
             type: "client_log",
-            sessionId: nodeModeManager.getSessionId(),
+            sessionId: sessionId,
             nodeId: node_info.node_id,
             error: "node status not fork!",
           }),
@@ -428,7 +496,7 @@ export const Fork_route_ws = async (msg, ws, db, node_info) => {
         return await ws.send(
           JSON.stringify({
             type: "client_log",
-            sessionId: nodeModeManager.getSessionId(),
+            sessionId: sessionId,
             nodeId: node_info.node_id,
             success: "one step fork complate",
           }),
@@ -439,7 +507,7 @@ export const Fork_route_ws = async (msg, ws, db, node_info) => {
         return await ws.send(
           JSON.stringify({
             type: "client_log",
-            sessionId: nodeModeManager.getSessionId(),
+            sessionId: sessionId,
             nodeId: node_info.node_id,
             error: "invalid fork point",
           }),

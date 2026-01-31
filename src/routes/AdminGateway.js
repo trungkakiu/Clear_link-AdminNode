@@ -9,17 +9,19 @@ const AdminGateway = (app, db) => {
   });
   router.get(
     "/node-base-infomation/get-info",
-    api_controller.get_nodestatus(db)
+    api_controller.get_nodestatus(db),
   );
+
+  router.post("/pair/hash/:height", api_controller.pairhash(db));
 
   router.post(
     "/node-base-infomation/delete-latest",
-    api_controller.delete_latest(db)
+    api_controller.delete_latest(db),
   );
 
   router.post(
     "/node-base-infomation/new-forkblock",
-    api_controller.new_fork_block(db)
+    api_controller.new_fork_block(db),
   );
   return app.use("/admin/node/", router);
 };

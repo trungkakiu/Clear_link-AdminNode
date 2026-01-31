@@ -102,7 +102,7 @@ export default async function connectToMetaGateway(nodeConfig, db) {
         const node_mode = nodeModeManager.getMode();
         const session_id = await nodeModeManager.getSessionId();
         const msg = JSON.parse(raw.toString());
-        console.log("WS → AdminNode:", msg);
+        console.log("WS → AdminNode:", JSON.stringify(msg, null, 2));
 
         ws.send(
           JSON.stringify({

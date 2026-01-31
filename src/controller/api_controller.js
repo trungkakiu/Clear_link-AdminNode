@@ -29,6 +29,16 @@ const signature_data = async (nodeId, time_now) => {
   return signer.sign(KeyStore.getPrivateKey(), "base64");
 };
 
+const signature_rawdata = async (canonicalVotes) => {
+  const data = JSON.stringify(canonicalVotes);
+
+  const signer = crypto.createSign("RSA-SHA256");
+  signer.update(data, "utf8");
+  signer.end();
+
+  return signer.sign(KeyStore.getPrivateKey(), "base64");
+};
+
 const validator_admin_config = JSON.parse(
   fs.readFileSync(validator_admin_config_path, "utf-8"),
 );
@@ -196,7 +206,7 @@ const get_nodestatus = (db) => async (req, res) => {
   }
 };
 
-const get_block_by_height = (height) => {
+const get_block_by_height = async (db, height) => {
   return db.Block.findOne({
     where: {
       Height: height,
@@ -204,17 +214,17 @@ const get_block_by_height = (height) => {
   });
 };
 
-const get_block_currentid_status_type = (current_id, status, type, limit) => {
-  return db.Block.findAll({
-    where: {
-      current_id,
-      status,
-      type,
-    },
-    limit,
-    order: [["Height", "ASC"]],
-  });
-};
+const get_block_currentid_status_type =
+  (db) => async (current_id, status, type) => {
+    return await db.Block.findOne({
+      where: {
+        current_id,
+        status,
+        type,
+      },
+      order: [["Height", "ASC"]],
+    });
+  };
 
 const get_block_status_currentid = (current_id, status, limit) => {
   return db.Block.findAll({
@@ -387,6 +397,24 @@ const get_vote = async (db, payload) => {
   }
 };
 
+const recomputeRawBlockHash = (headerRaw) => {
+  if (!headerRaw) return null;
+
+  const data = Buffer.isBuffer(headerRaw)
+    ? headerRaw
+    : typeof headerRaw === "string"
+      ? Buffer.from(headerRaw)
+      : headerRaw?.data
+        ? Buffer.from(headerRaw.data)
+        : null;
+
+  if (!data) return null;
+
+  const hash = crypto.createHash("sha256");
+  hash.update(data);
+  return hash.digest("hex");
+};
+
 function recomputeBlockHash(block) {
   const raw = [
     String(block.Height),
@@ -403,7 +431,6 @@ function recomputeBlockHash(block) {
 
 const create_new_block = async (db, payload, node_info, timestamp) => {
   try {
-    console.log("payload: ", payload);
     const {
       original_value,
       version,
@@ -413,32 +440,39 @@ const create_new_block = async (db, payload, node_info, timestamp) => {
       status,
       hash,
     } = payload;
+
+    const existsBlock = await get_block_currentid_status_type(db)(
+      current_id,
+      "active",
+      "product_create",
+    );
+
+    if (existsBlock) {
+      return {
+        ok: false,
+      };
+    }
     const latestBlock = await get_latest_block(db);
 
     const height = latestBlock ? latestBlock.Height + 1 : 1;
     const MerkleRoot = hash ? hash : "";
     const previousHash = latestBlock ? latestBlock.Hash : "GENESIS";
-    const raw = [
-      height,
-      previousHash,
-      current_id,
-      Owner_id,
-      version,
-      type,
-      MerkleRoot,
+
+    const rawString = [
+      String(height),
+      previousHash ?? "GENESIS",
+      current_id ?? "",
+      Owner_id ?? "",
+      version ?? "",
+      type ?? "",
+      MerkleRoot ?? "",
     ].join("|");
 
-    const product_hash = recomputeBlockHash({
-      Height: height,
-      PreviousHash: previousHash,
-      current_id: current_id,
-      Owner_id: Owner_id,
-      MerkleRoot: MerkleRoot,
-      Creator: node_info.node_id,
-      Version: version,
-    });
+    const headerRawBuffer = Buffer.from(rawString, "utf8");
+    const product_hash = recomputeRawBlockHash(headerRawBuffer);
 
     const newBlock = {
+      headerRaw: headerRawBuffer,
       Height: height,
       PreviousHash: previousHash,
       Hash: product_hash,
@@ -482,11 +516,12 @@ const create_new_user = async (db, payload, node_info, timestamp) => {
 
     const height = latestBlock ? latestBlock.Height + 1 : 1;
     const previousHash = latestBlock ? latestBlock.Hash : "GENESIS";
-    const raw = [height, previousHash, id, "", version, type, hash].join("|");
-
-    const user_hash = crypto.createHash("sha256").update(raw).digest("hex");
+    const raw = [height, previousHash, "", id, version, type, hash].join("|");
+    const headerRawBuffer = Buffer.from(raw, "utf8");
+    const user_hash = recomputeRawBlockHash(headerRawBuffer);
 
     const newBlock = {
+      headerRaw: headerRawBuffer,
       Height: height,
       PreviousHash: previousHash,
       Hash: user_hash,
@@ -571,7 +606,7 @@ const getBlocksRequest = async (db, from, limit) => {
       };
     }
 
-    const startHeight = from;
+    const startHeight = from + 1;
     const endHeight = from + limit;
 
     const blocks = await db.Block.findAll({
@@ -645,6 +680,33 @@ const delete_latest_block = async (db) => {
   }
 };
 
+const drop_block_by_id_type_status =
+  (db) => async (current_id, type, status) => {
+    try {
+      if (!current_id) {
+        return false;
+      }
+
+      const block = await get_block_currentid_status_type(db)(
+        current_id,
+        status,
+        type,
+      );
+
+      if (!block) {
+        return false;
+      }
+
+      await block.update({
+        status: "drop",
+      });
+
+      return true;
+    } catch (error) {
+      console.error(error);
+      return false;
+    }
+  };
 const getAnchorBlock = async (db, limit) => {
   try {
     if (!Number.isInteger(limit) || limit <= 0 || limit > 1000) {
@@ -748,7 +810,135 @@ const new_fork_block = (db) => async (req, res) => {
   }
 };
 
+const pairhash = (db) => async (req, res) => {
+  try {
+    const { height } = req?.params;
+    if (!height) {
+      return res.status(200).json({
+        RM: "thieu height!",
+        RC: -203,
+      });
+    }
+
+    const current_block = await get_block_by_height(db, height);
+    console.log(current_block);
+    if (!current_block) {
+      return res.status(200).json({
+        RM: "khong tim thay block!",
+        RC: -203,
+      });
+    }
+
+    const rehash = recomputeRawBlockHash(current_block.headerRaw);
+    if (!rehash || rehash == null) {
+      return res.status(200).json({
+        RM: "khong rehash duoc!",
+        RC: -203,
+      });
+    }
+
+    return res.status(200).json({
+      RM: "hash xong",
+      RC: 200,
+      RD: {
+        rehash: rehash,
+        hash: current_block.Hash,
+        pair: rehash == current_block.Hash,
+      },
+    });
+  } catch (error) {
+    console.error(error);
+    return res.status(500).json({
+      RM: "cant new latest block",
+      RC: 500,
+    });
+  }
+};
+
+const drop_vote = (db) => async (product_list) => {
+  try {
+    const votes = [];
+    for (const p of product_list) {
+      if (!p?.product_id) {
+        votes.push({
+          product_id: null,
+          approve: false,
+          reason: "Invalid product_id",
+        });
+        continue;
+      }
+
+      const current_block = await get_block_currentid_status_type(db)(
+        p.product_id,
+        "active",
+        "product_create",
+        1,
+      );
+
+      if (!current_block) {
+        votes.push({
+          product_id: p.product_id,
+          approve: false,
+          reason: "Block not found",
+        });
+        continue;
+      }
+
+      const rehash = recomputeRawBlockHash(current_block.headerRaw);
+
+      if (!rehash || rehash !== current_block.Hash) {
+        votes.push({
+          product_id: p.product_id,
+          approve: false,
+          reason: "Block hash mismatch",
+        });
+        continue;
+      }
+
+      votes.push({
+        product_id: p.product_id,
+        approve: true,
+        reason: "OK",
+      });
+    }
+
+    return {
+      RM: "get drop vote complete!",
+      RC: 200,
+      RD: votes,
+    };
+  } catch (error) {
+    console.error("error: ", error);
+    return {
+      RM: "error while get drop vote!",
+      RC: 500,
+    };
+  }
+};
+
+const drop_product = (db) => (product) => {
+  try {
+    if (!product) {
+      console.log("Missing value");
+      return {
+        RM: error,
+        RC: 203,
+        RD: false,
+      };
+    }
+  } catch (error) {
+    console.error(error);
+    return {
+      RM: error,
+      RC: 500,
+      RD: false,
+    };
+  }
+};
 export default {
+  pairhash,
+  drop_vote,
+  drop_product,
   recomputeBlockHash,
   getAnchorBlock,
   delete_latest,
@@ -766,4 +956,6 @@ export default {
   get_latest_block,
   new_fork_block,
   signature_data,
+  signature_rawdata,
+  drop_block_by_id_type_status,
 };
