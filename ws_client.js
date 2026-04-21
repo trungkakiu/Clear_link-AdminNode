@@ -18,7 +18,7 @@ let wsInstance = null;
 
 export let session_id = null;
 export default async function connectToMetaGateway(nodeConfig, db) {
-  const metaWsUrl = "ws://192.168.110.197:5099";
+  const metaWsUrl = "wss://api.clearlink.io.vn";
   const node_info_list = await db.Node_Info.findAll({});
   const node_info = node_info_list[0];
   const node_id = node_info.node_id;

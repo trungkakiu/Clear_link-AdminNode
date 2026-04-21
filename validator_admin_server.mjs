@@ -18,13 +18,13 @@ const validatorAdminConfigPath =
 
 if (!fs.existsSync(validatorAdminConfigPath)) {
   console.error(
-    `Không tìm thấy file cấu hình ADMIN: ${validatorAdminConfigPath}`
+    `Không tìm thấy file cấu hình ADMIN: ${validatorAdminConfigPath}`,
   );
   process.exit(1);
 }
 
 const validator_admin_config = JSON.parse(
-  fs.readFileSync(validatorAdminConfigPath, "utf-8")
+  fs.readFileSync(validatorAdminConfigPath, "utf-8"),
 );
 
 const args = minimist(process.argv.slice(2));

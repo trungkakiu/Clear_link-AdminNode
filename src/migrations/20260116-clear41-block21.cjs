@@ -1,17 +1,3 @@
-// "use strict";
-
-// module.exports = {
-//   async up(queryInterface, Sequelize) {
-//     console.log("Reset Node_Info state...");
-
-//     await queryInterface.dropTable("Node_Info");
-//   },
-
-//   async down(queryInterface, Sequelize) {
-//     console.log("Rollback reset Node_Info state: nothing to restore");
-//   },
-// };
-
 "use strict";
 
 module.exports = {

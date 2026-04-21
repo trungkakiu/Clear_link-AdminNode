@@ -5,24 +5,37 @@ class NodeModeManager {
     this.mode = "active";
     this.session_id = null;
     this.requestId = null;
+    this.modeChangeQueue = Promise.resolve();
+    this.blockCreationQueue = Promise.resolve();
   }
 
   async setMode(newMode, db) {
-    try {
-      console.log(`[MODE] ${this.mode} -> ${newMode}`);
+    this.modeChangeQueue = this.modeChangeQueue.then(async () => {
+      try {
+        if (this.mode === newMode) {
+          return true;
+        }
 
-      const node = await db.Node_Info.findOne();
-      if (node) {
-        await node.update({ status: newMode });
+        console.log(`[QUEUE] Processing change: ${this.mode} -> ${newMode}`);
+
+        const node = await db.Node_Info.findOne();
+        if (node) {
+          await node.update({ status: newMode });
+        }
+
+        console.log(`[MODE START] Switched to: ${newMode}`);
+        this.mode = newMode;
+
+        startModeLoop(db);
+
+        return true;
+      } catch (error) {
+        console.error("[MODE QUEUE ERROR]", error);
+        return false;
       }
-      console.log(`[MODE START] ${this.mode} -> ${newMode}`);
-      this.mode = newMode;
-      startModeLoop(db);
-      return true;
-    } catch (error) {
-      console.error(error);
-      return false;
-    }
+    });
+
+    return this.modeChangeQueue;
   }
 
   async setSessionId(session_id) {
