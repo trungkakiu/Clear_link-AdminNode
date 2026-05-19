@@ -11,10 +11,24 @@ let isRollingBack = false;
 const syncBlocks = async (db) => {
   try {
     const now = Date.now();
+    console.log(`\n[DEBUG syncBlocks] --- BẮT ĐẦU CHẠY (Time: ${now}) ---`);
+
     const node_info = await db.Node_Info.findOne();
     const sessionId = await nodeModeManager.getSessionId();
 
+    // 1. IN RA TẤT CẢ TRẠNG THÁI HIỆN TẠI ĐỂ BẮT BỆNH
+    console.log(`[DEBUG syncBlocks] STATE:`, {
+      _coolDownUntil: runtimeState._coolDownUntil,
+      _lastSyncAttemptAt: runtimeState._lastSyncAttemptAt,
+      _isSendSyncRequest: runtimeState._isSendSyncRequest,
+      _syncRetryCount: runtimeState._syncRetryCount,
+    });
+
+    // CHECK 1: Cooldown
     if (runtimeState._coolDownUntil && now < runtimeState._coolDownUntil) {
+      console.log(
+        `[DEBUG syncBlocks] 🛑 BỊ CHẶN 1: Đang bị Cooldown (còn ${(runtimeState._coolDownUntil - now) / 1000}s)`,
+      );
       return wsGateway.send({
         type: "client_log",
         sessionId,
@@ -25,7 +39,11 @@ const syncBlocks = async (db) => {
 
     const isRequestTimeout = now - runtimeState._lastSyncAttemptAt > 30000;
 
+    // CHECK 2: Sync in-flight
     if (runtimeState._isSendSyncRequest && !isRequestTimeout) {
+      console.log(
+        `[DEBUG syncBlocks] 🛑 BỊ CHẶN 2: Request cũ chưa xong (In-flight). isRequestTimeout: ${isRequestTimeout}`,
+      );
       return wsGateway.send({
         type: "client_log",
         sessionId,
@@ -34,11 +52,19 @@ const syncBlocks = async (db) => {
       });
     }
 
+    // CHECK 3: Rate Limit 5s (Kẻ thù giấu mặt gây im lặng)
     if (now - runtimeState._lastSyncAttemptAt < 5000) {
+      console.log(
+        `[DEBUG syncBlocks] 🛑 BỊ CHẶN 3 (Silent Exit): Chưa đủ 5s kể từ lần chạy trước (${now - runtimeState._lastSyncAttemptAt}ms). Hủy chạy!`,
+      );
       return;
     }
 
+    // CHECK 4: Quá số lần thử
     if (runtimeState._syncRetryCount >= 20) {
+      console.log(
+        `[DEBUG syncBlocks] 🛑 BỊ CHẶN 4: Vượt 20 lần retry. Kích hoạt Cooldown 20s.`,
+      );
       runtimeState._coolDownUntil = now + 20000;
       runtimeState._syncRetryCount = 0;
       runtimeState._isSendSyncRequest = false;
@@ -50,11 +76,19 @@ const syncBlocks = async (db) => {
       });
     }
 
+    console.log(
+      `[DEBUG syncBlocks]   VƯỢT QUA TẤT CẢ ĐIỀU KIỆN CHẶN! Chuẩn bị gửi request...`,
+    );
+
     runtimeState._isSendSyncRequest = true;
     runtimeState._lastSyncAttemptAt = now;
 
     const latest_block = await api_controller.get_latest_block(db);
     const fromHeight = latest_block ? latest_block.Height : 0;
+
+    console.log(
+      `[DEBUG syncBlocks] 🚀 ĐANG GỬI LỆNH: sync_request | from_height: ${fromHeight}`,
+    );
 
     wsGateway.send({
       type: "sync_request",
@@ -65,7 +99,7 @@ const syncBlocks = async (db) => {
       limit: 20,
     });
   } catch (error) {
-    console.error("[syncBlocks ERROR]", error);
+    console.error("\n[syncBlocks ERROR] LỖI CATCH:", error);
     runtimeState._isSendSyncRequest = false;
     wsGateway.send({
       type: "client_log",

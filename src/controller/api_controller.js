@@ -84,7 +84,6 @@ function getRamUsage() {
   };
 }
 export async function getDiskUsage() {
-  console.log("checkDiskSpace:", checkDiskSpace);
   let rootPath = path.parse(process.cwd()).root;
 
   if (os.platform() === "win32") {
@@ -92,8 +91,6 @@ export async function getDiskUsage() {
       rootPath = "C:\\";
     }
   }
-  console.log("cwd:", process.cwd());
-  console.log("root:", path.parse(process.cwd()).root);
   return await checkDiskSpace(rootPath);
 }
 
@@ -128,7 +125,6 @@ async function checkDBHealth(db) {
       WHERE table_schema = DATABASE();
     `);
 
-    console.log(rows);
     const size = rows?.[0]?.size ?? 0;
 
     const rawSize = Number(rows?.[0]?.size ?? 0);
@@ -214,6 +210,24 @@ const get_block_by_height = async (db, height) => {
   });
 };
 
+const get_block_by_type_version = async (db, type, current_id, version) => {
+  try {
+    const safeType = (type || "").toLowerCase().trim();
+    const safeId = (current_id || "").toLowerCase().trim();
+
+    const exactIndexKey = `idx_exact_${safeType}_${safeId}_${version}`;
+
+    return await db.Block.findOne({
+      where: {
+        exact_index: exactIndexKey,
+      },
+    });
+  } catch (error) {
+    console.error("Error in get_block_by_type_version:", error);
+    return null;
+  }
+};
+
 const get_block_currentid_status_type =
   (db) => async (current_id, status, type) => {
     return await db.Block.findOne({
@@ -263,7 +277,7 @@ const vetify_signature = (public_key, signature, client_hash) => {
   }
 };
 
-const get_node_new_vote = (db, public_key, signature, client_hash) => {
+const get_node_new_vote = async (db, public_key, signature, client_hash) => {
   try {
     const signature_valid = vetify_signature(
       public_key,
@@ -314,8 +328,20 @@ const get_node_new_vote = (db, public_key, signature, client_hash) => {
 
 const get_vote = async (db, payload) => {
   try {
-    const { public_key, signature, client_hash, current_id, type, status } =
-      payload;
+    const {
+      public_key,
+      signature,
+      client_hash,
+      current_id,
+      type,
+      status,
+      version,
+    } = payload;
+
+    console.log(
+      `[get_vote] Received vote request: type=${type}, current_id=${current_id}, version=${version}`,
+    );
+
     const signature_valid = vetify_signature(
       public_key,
       signature,
@@ -335,10 +361,11 @@ const get_vote = async (db, payload) => {
       };
     }
 
-    const prev_block = await get_block_currentid_status_type(
-      current_id,
-      status,
+    const prev_block = await get_block_by_type_version(
+      db,
       type,
+      current_id,
+      version || "1",
     );
 
     if (!prev_block) {
@@ -436,24 +463,28 @@ const create_new_block = async (db, payload, node_info, timestamp) => {
       version,
       Owner_id,
       current_id,
+      product_id,
       type,
       status,
       hash,
     } = payload;
 
-    const existsBlock = await get_block_currentid_status_type(db)(
-      current_id,
-      "active",
-      "product_create",
-    );
+    const product_idraw = (current_id || product_id || "").trim();
+    const safeType = (type || "").trim();
+    const safeVersion = (version || "1").trim();
+    const safeStatus = (status || "active").trim();
+
+    const exactIndexKey = `idx_exact_${safeType}_${product_idraw}_${safeVersion}`;
+
+    const existsBlock = await db.Block.findOne({
+      where: { exact_index: exactIndexKey },
+    });
 
     if (existsBlock) {
-      return {
-        ok: false,
-      };
+      return { ok: false, msg: "Block với phiên bản này đã tồn tại!" };
     }
-    const latestBlock = await get_latest_block(db);
 
+    const latestBlock = await get_latest_block(db);
     const height = latestBlock ? latestBlock.Height + 1 : 1;
     const MerkleRoot = hash ? hash : "";
     const previousHash = latestBlock ? latestBlock.Hash : "GENESIS";
@@ -461,7 +492,7 @@ const create_new_block = async (db, payload, node_info, timestamp) => {
     const rawString = [
       String(height),
       previousHash ?? "GENESIS",
-      current_id ?? "",
+      product_idraw ?? "",
       Owner_id ?? "",
       version ?? "",
       type ?? "",
@@ -471,23 +502,47 @@ const create_new_block = async (db, payload, node_info, timestamp) => {
     const headerRawBuffer = Buffer.from(rawString, "utf8");
     const product_hash = recomputeRawBlockHash(headerRawBuffer);
 
+    const privatekey = KeyStore.getPrivateKey();
+    const signature = signBlockData(
+      payload.timestamp,
+      product_hash,
+      privatekey,
+    );
+
     const newBlock = {
       headerRaw: headerRawBuffer,
       Height: height,
+      ValidatorSignature: signature,
       PreviousHash: previousHash,
       Hash: product_hash,
       type: type,
-      current_id: current_id,
+      current_id: product_idraw,
       Owner_id: Owner_id,
-      status: status,
+      status: safeStatus,
       Timestamp: timestamp,
-      MerkleRoot: MerkleRoot ? MerkleRoot : "",
+      MerkleRoot: MerkleRoot,
       Creator: node_info.node_id,
       Version: version,
       original_value: original_value,
+
+      exact_index: exactIndexKey,
+      history_index: `idx_history_${product_idraw}_${height}`,
+      type_index: `index_type_${safeType}_${product_idraw}`.slice(0, 255),
     };
 
+    if (parseInt(version) > 1) {
+      const prevVersion = parseInt(version) - 1;
+      const prevIndexKey = `idx_exact_${safeType}_${product_idraw}_${prevVersion}`;
+
+      await db.Block.update(
+        { status: "inactive" },
+        { where: { exact_index: prevIndexKey } },
+      );
+      console.log(`[Blockchain] Deactivated previous version: ${prevIndexKey}`);
+    }
+
     await db.Block.create(newBlock);
+
     return {
       ok: true,
       block_hash: product_hash,
@@ -497,7 +552,7 @@ const create_new_block = async (db, payload, node_info, timestamp) => {
       validator: node_info.node_id,
     };
   } catch (error) {
-    console.error(error);
+    console.error("create_new_block Error:", error);
     return {
       ok: false,
       block_hash: "",
@@ -509,6 +564,24 @@ const create_new_block = async (db, payload, node_info, timestamp) => {
   }
 };
 
+const signBlockData = (timestamp, dataHash, privateKeyPem) => {
+  try {
+    const data = `${dataHash}`;
+
+    const dataBuffer = Buffer.from(data, "utf8");
+
+    const signature = crypto.sign("SHA256", dataBuffer, {
+      key: privateKeyPem,
+      padding: crypto.constants.RSA_PKCS1_PADDING,
+    });
+
+    return signature.toString("base64");
+  } catch (error) {
+    console.error("[CLEARLINK SIGN ERROR]", error);
+    throw new Error("Không thể ký dữ liệu block: " + error.message);
+  }
+};
+
 const create_new_user = async (db, payload, node_info, timestamp) => {
   try {
     const { id, hash, type, version } = payload;
@@ -516,13 +589,17 @@ const create_new_user = async (db, payload, node_info, timestamp) => {
 
     const height = latestBlock ? latestBlock.Height + 1 : 1;
     const previousHash = latestBlock ? latestBlock.Hash : "GENESIS";
-    const raw = [height, previousHash, "", id, version, type, hash].join("|");
+    const raw = [height, previousHash, "_", id, "1", type, hash].join("|");
     const headerRawBuffer = Buffer.from(raw, "utf8");
     const user_hash = recomputeRawBlockHash(headerRawBuffer);
+
+    const privatekey = KeyStore.getPrivateKey();
+    const signature = signBlockData(payload.timestamp, user_hash, privatekey);
 
     const newBlock = {
       headerRaw: headerRawBuffer,
       Height: height,
+      ValidatorSignature: signature,
       PreviousHash: previousHash,
       Hash: user_hash,
       type: type,
@@ -533,10 +610,11 @@ const create_new_user = async (db, payload, node_info, timestamp) => {
       MerkleRoot: hash,
       Creator: node_info.node_id,
       Version: version,
-      original_value: "",
+      original_value: payload.original_value,
     };
 
     await db.Block.create(newBlock);
+
     return {
       ok: true,
       type: "admin",
@@ -554,6 +632,256 @@ const create_new_user = async (db, payload, node_info, timestamp) => {
       height: "",
       previous: "",
       validator: "",
+    };
+  }
+};
+
+export const sync_block_from_network = async (db, blockData) => {
+  try {
+    let headerBuffer = null;
+    if (blockData.headerRaw && blockData.headerRaw.type === "Buffer") {
+      headerBuffer = Buffer.from(blockData.headerRaw.data);
+    } else if (Buffer.isBuffer(blockData.headerRaw)) {
+      headerBuffer = blockData.headerRaw;
+    }
+
+    const hash = recomputeRawBlockHash(headerBuffer);
+
+    const privatekey = KeyStore.getPrivateKey();
+    const signature = signBlockData("", hash, privatekey);
+
+    const syncBlock = {
+      headerRaw: headerBuffer,
+      Height: blockData.Height,
+      ValidatorSignature: signature,
+      PreviousHash: blockData.PreviousHash,
+      Hash: blockData.Hash,
+      type: blockData.type,
+      current_id: blockData.current_id,
+      Owner_id: blockData.Owner_id,
+      status: blockData.status,
+      Timestamp: blockData.Timestamp,
+      MerkleRoot: blockData.MerkleRoot || "",
+      Creator: blockData.Creator,
+      Version: blockData.Version,
+      original_value: blockData.original_value,
+    };
+
+    await db.Block.create(syncBlock);
+    return { ok: true };
+  } catch (error) {
+    console.error("[SYNC BLOCK ERROR]", error);
+    return { ok: false };
+  }
+};
+
+const verifyBlockSignature = (blockHash, signatureBase64, publicKeyPem) => {
+  try {
+    const bufferHex = Buffer.from(blockHash, "hex");
+    const bufferUtf8 = Buffer.from(blockHash, "utf8");
+
+    let isValid = false;
+
+    let verifier = crypto.createVerify("SHA256");
+    verifier.update(bufferHex);
+    isValid = verifier.verify(publicKeyPem, signatureBase64, "base64");
+    if (isValid) {
+      return true;
+    }
+
+    verifier = crypto.createVerify("SHA256");
+    verifier.update(bufferUtf8);
+    isValid = verifier.verify(publicKeyPem, signatureBase64, "base64");
+    if (isValid) {
+      return true;
+    }
+
+    // --- TRƯỜNG HỢP 3: C# dùng PSS Padding và băm kiểu HEX (Chuẩn bảo mật mới của .NET) ---
+    isValid = crypto.verify(
+      "SHA256",
+      bufferHex,
+      { key: publicKeyPem, padding: crypto.constants.RSA_PKCS1_PSS_PADDING },
+      Buffer.from(signatureBase64, "base64"),
+    );
+    if (isValid) {
+      return true;
+    }
+
+    isValid = crypto.verify(
+      "SHA256",
+      bufferUtf8,
+      { key: publicKeyPem, padding: crypto.constants.RSA_PKCS1_PSS_PADDING },
+      Buffer.from(signatureBase64, "base64"),
+    );
+    if (isValid) {
+      return true;
+    }
+
+    return false;
+  } catch (error) {
+    console.error("Signature Verify Error:", error);
+    return false;
+  }
+};
+
+const verifyTrace = async (db, payload, node_info) => {
+  try {
+    console.log(
+      `\n[VERIFY TRACE] ====== BẮT ĐẦU XÁC THỰC LỆNH: ${payload?.type} ======`,
+    );
+    console.log(`[VERIFY TRACE] Payload nhận được:`, payload);
+
+    if (
+      !payload ||
+      !payload.hash ||
+      (!payload.product_id && !payload.current_id)
+    ) {
+      console.log(`[VERIFY TRACE] Lỗi: Thiếu dữ liệu đầu vào.`);
+      return {
+        ok: false,
+        message: "Missing data input",
+        status: "data_missing",
+      };
+    }
+
+    const current_id = payload.product_id || payload.current_id;
+    console.log(
+      `[VERIFY TRACE] Query DB tìm Block -> type: ${payload.type}, current_id: ${current_id}, status: ${payload.status}`,
+    );
+
+    const block = await get_block_by_type_version(
+      db,
+      payload.type,
+      current_id,
+      payload.version || "1",
+    );
+
+    if (!block) {
+      console.log(`[VERIFY TRACE] Lỗi: Không tìm thấy Block trong Database.`);
+      return {
+        ok: false,
+        message: "Data not found in Ledger",
+        status: "not_found",
+      };
+    }
+
+    console.log(
+      `[VERIFY TRACE] Đã tìm thấy Block Height: ${block.Height} | Hash DB: ${block.Hash}`,
+    );
+
+    console.log(`\n[VERIFY TRACE] 1. Kiểm tra Content Hash (MerkleRoot):`);
+    console.log(`   - payload.hash gửi lên : ${payload.hash}`);
+    console.log(`   - block.MerkleRoot DB  : ${block.MerkleRoot}`);
+
+    if (payload.hash !== block.MerkleRoot) {
+      console.log(
+        `[VERIFY TRACE] => LỖI: Hash nội dung không khớp! (Data Tampered)`,
+      );
+      return {
+        ok: false,
+        message: "Data Tampered! (Content hash mismatch)",
+        status: block.status,
+      };
+    }
+    console.log(`[VERIFY TRACE] => Content Hash KHỚP!`);
+    console.log(`\n[VERIFY TRACE] 2. Kiểm tra Block Header Integrity:`);
+
+    const prevHash = block.PreviousHash ?? "GENESIS";
+    const currId = block.current_id ?? "";
+    const ownerId = block.Owner_id ?? "";
+    const version = block.Version ?? "";
+    const bType = block.type ?? "";
+    const merkleRoot = block.MerkleRoot ?? "";
+
+    console.log(`   - block.Height      : ${block.Height}`);
+    console.log(`   - block.PreviousHash: "${prevHash}"`);
+    console.log(`   - block.current_id  : "${currId}"`);
+    console.log(`   - block.Owner_id    : "${ownerId}"`);
+    console.log(`   - block.Version     : "${version}"`);
+    console.log(`   - block.type        : "${bType}"`);
+    console.log(`   - block.MerkleRoot  : "${merkleRoot}"`);
+
+    const headerRawStr = [
+      String(block.Height),
+      prevHash,
+      currId,
+      ownerId,
+      version,
+      bType,
+      merkleRoot,
+    ].join("|");
+
+    console.log(
+      `[VERIFY TRACE] Chuỗi Header RAW dùng để băm: "${headerRawStr}"`,
+    );
+
+    const reCalculatedBlockHash = crypto
+      .createHash("sha256")
+      .update(headerRawStr)
+      .digest("hex");
+
+    console.log(`   - Hash vừa băm lại : ${reCalculatedBlockHash}`);
+    console.log(`   - Hash gốc trên DB : ${block.Hash}`);
+
+    if (reCalculatedBlockHash !== block.Hash) {
+      console.log(`[VERIFY TRACE] => LỖI: Block Header Integrity Violation!`);
+      return {
+        ok: false,
+        message: "Block Header Integrity Violation!",
+        status: "integrity_error",
+      };
+    }
+    console.log(`[VERIFY TRACE] => Block Hash KHỚP!`);
+
+    console.log(`\n[VERIFY TRACE] 3. Kiểm tra Chữ ký số (Signature):`);
+    if (!node_info || !node_info.public_key) {
+      console.log(`[VERIFY TRACE] Lỗi: Thiếu Public Key.`);
+      return {
+        ok: false,
+        message: "Missing public key for verification",
+        status: "unauthorized",
+      };
+    }
+
+    const isSignatureValid = verifyBlockSignature(
+      block.Hash,
+      block.ValidatorSignature,
+      node_info.public_key,
+    );
+
+    if (!isSignatureValid) {
+      console.log(`[VERIFY TRACE] => LỖI: Chữ ký số không hợp lệ!`);
+      return {
+        ok: false,
+        message: "Security Violation! Invalid Digital Signature",
+        status: "unauthorized",
+      };
+    }
+
+    console.log(`[VERIFY TRACE] => Chữ ký hợp lệ. TRACE THÀNH CÔNG! ====== \n`);
+
+    return {
+      ok: true,
+      message: "Verified & Audited by CLEARLINK",
+      status: block.status,
+      block: {
+        ok: true,
+        block_hash: block.Hash,
+        height: block.Height,
+        previous: block.PreviousHash,
+        validator: node_info.node_id || "ADMIN_NODE",
+
+        type: block.type,
+        current_id: block.current_id,
+        status: block.status,
+      },
+    };
+  } catch (error) {
+    console.error("[verifyTrace Error]:", error);
+    return {
+      ok: false,
+      message: error.message || "Internal Server Error",
+      status: "error",
     };
   }
 };
@@ -707,6 +1035,7 @@ const drop_block_by_id_type_status =
       return false;
     }
   };
+
 const getAnchorBlock = async (db, limit) => {
   try {
     if (!Number.isInteger(limit) || limit <= 0 || limit > 1000) {
@@ -939,6 +1268,7 @@ export default {
   pairhash,
   drop_vote,
   drop_product,
+  sync_block_from_network,
   recomputeBlockHash,
   getAnchorBlock,
   delete_latest,
@@ -957,5 +1287,7 @@ export default {
   new_fork_block,
   signature_data,
   signature_rawdata,
+  verifyTrace,
   drop_block_by_id_type_status,
+  get_block_by_type_version,
 };

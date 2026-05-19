@@ -50,53 +50,62 @@ export const Maintenance_route_ws = async (msg, ws, db, node_info) => {
 
 export const Public_route_ws = async (msg, ws, db, node_info) => {
   try {
+    console.log(`\n[DEBUG Public_route]   Nhận message type: ${msg.type}`);
+
     if (msg.type === "connected") {
       const sessionId = msg.sessionId;
       const status = msg.status;
 
-      if (!sessionId) return;
+      console.log(
+        `[DEBUG Public_route]   BẮT ĐẦU HANDSHAKE | sessionId: ${sessionId} | status: ${status}`,
+      );
 
+      if (!sessionId) return;
       if (handshakeDone) return;
       handshakeDone = true;
 
-      nodeModeManager.modeChangeQueue = nodeModeManager.modeChangeQueue.then(
-        async () => {
-          try {
-            const MODE_MAP = {
-              fork: "fork",
-              active: "active",
-              syncing: "syncing",
-              down: "down",
-            };
-            const normalizedStatus = String(status || "")
-              .toLowerCase()
-              .trim();
-            const nextMode = MODE_MAP[normalizedStatus];
+      const MODE_MAP = {
+        fork: "fork",
+        active: "active",
+        syncing: "syncing",
+        down: "down",
+      };
 
-            if (!nextMode) {
-              handshakeDone = false;
-              return ws.send(
-                JSON.stringify({
-                  type: "client_log",
-                  sessionId,
-                  error: "status invalid",
-                }),
-              );
-            }
+      const normalizedStatus = String(status || "")
+        .toLowerCase()
+        .trim();
+      const nextMode = MODE_MAP[normalizedStatus];
 
-            console.log("Thiết lập Session: ", sessionId);
-            await nodeModeManager.setSessionId(sessionId);
+      if (!nextMode) {
+        handshakeDone = false;
+        console.log(
+          `[DEBUG Public_route] ❌ Trạng thái không hợp lệ: '${normalizedStatus}'`,
+        );
+        return ws.send(
+          JSON.stringify({
+            type: "client_log",
+            sessionId,
+            error: "status invalid",
+          }),
+        );
+      }
 
-            await nodeModeManager.setMode(nextMode, db);
-          } catch (innerError) {
-            handshakeDone = false;
-            console.error("Lỗi thiết lập ban đầu:", innerError);
-          }
-        },
+      console.log(`[DEBUG Public_route]   Đang lưu SessionId...`);
+      await nodeModeManager.setSessionId(sessionId);
+
+      console.log(`[DEBUG Public_route]   Đang gọi setMode('${nextMode}') ...`);
+
+      // FIX DEADLOCK: Gọi thẳng setMode, không bọc qua modeChangeQueue.then(...) nữa
+      // vì setMode tự nó đã nối đuôi vào Queue rồi!
+      await nodeModeManager.setMode(nextMode, db);
+
+      console.log(
+        `[DEBUG Public_route]   THIẾT LẬP MODE THÀNH CÔNG! Trạng thái hiện tại: ${nextMode}`,
       );
     }
   } catch (error) {
-    console.error("Crashed Public_route:", error);
+    handshakeDone = false;
+    console.error("\n[DEBUG Public_route] 💥 CRASHED TOÀN HÀM:", error);
   }
 };
 
@@ -181,7 +190,370 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
         );
         return;
       }
+      if (msg.command == "batch_trace") {
+        console.log(
+          `\n[WS COMMAND] Nhận lệnh: batch_trace | RequestId: ${msg.requestId}`,
+        );
+        const payload = msg.payload?.payload; // Thêm ?. để chống crash nếu msg.payload undefined
 
+        try {
+          if (!payload) {
+            console.log(
+              `[WS ERROR] batch_trace: Payload bị thiếu! msg.payload =`,
+              msg.payload,
+            );
+            return await ws.send(
+              JSON.stringify({
+                type: "Batch_trace_respone",
+                sessionId: msg.sessionId,
+                requestId: msg.requestId,
+                ok: false,
+                message: "payload missing",
+                status: "data_missing",
+                time: Date.now(),
+              }),
+            );
+          }
+
+          console.log(
+            `[WS INFO] batch_trace: Payload hợp lệ. Đang parse timestamp...`,
+          );
+          const timestamp = new Date(Number(msg.payload.timestamp));
+
+          console.log(
+            `[WS EXECUTE] batch_trace: Gọi api_controller.verifyTrace...`,
+          );
+          const res = await api_controller.verifyTrace(
+            db,
+            payload,
+            node_info,
+            timestamp,
+          );
+
+          console.log(`[WS RESULT] batch_trace: verifyTrace trả về =`, res);
+
+          if (res) {
+            await ws.send(
+              JSON.stringify({
+                type: "Batch_trace_respone",
+                requestId: msg.requestId,
+                sessionId: msg.sessionId,
+                ok: res.ok,
+                message: res.message,
+                status: res.status,
+                block: res.block, // <--- THÊM ĐÚNG DÒNG NÀY
+                time: Date.now(),
+              }),
+            );
+            console.log(
+              `[WS SUCCESS] batch_trace: Đã gửi response thành công.`,
+            );
+          } else {
+            console.log(
+              `[WS ERROR] batch_trace: verifyTrace trả về null/undefined.`,
+            );
+            await ws.send(
+              JSON.stringify({
+                type: "Batch_trace_respone",
+                sessionId: session_id_current, // Lưu ý: Biến này anh đã define ở ngoài chưa?
+                requestId: msg.requestId,
+                nodeId: node_info.node_id,
+                ok: false,
+                message: "Handle error: result is null",
+                status: "error",
+                time: Date.now(),
+              }),
+            );
+          }
+        } catch (error) {
+          console.error(`[WS CRASH] batch_trace xảy ra exception:`, error);
+          await ws.send(
+            JSON.stringify({
+              type: "Batch_trace_respone",
+              sessionId: session_id_current,
+              requestId: msg.requestId,
+              nodeId: node_info.node_id,
+              ok: false,
+              message: error.message || error,
+              status: "error",
+              time: Date.now(),
+            }),
+          );
+        }
+      }
+
+      if (msg.command == "product_trace") {
+        console.log(
+          `\n[WS COMMAND] Nhận lệnh: product_trace | RequestId: ${msg.requestId}`,
+        );
+        const payload = msg.payload?.payload;
+
+        try {
+          if (!payload) {
+            console.log(
+              `[WS ERROR] product_trace: Payload bị thiếu! msg.payload =`,
+              msg.payload,
+            );
+            return await ws.send(
+              JSON.stringify({
+                type: "Product_trace_respone",
+                sessionId: msg.sessionId,
+                requestId: msg.requestId,
+                ok: false,
+                message: "payload missing",
+                status: "data_missing",
+                time: Date.now(),
+              }),
+            );
+          }
+
+          console.log(
+            `[WS INFO] product_trace: Payload hợp lệ. Đang parse timestamp...`,
+          );
+          const timestamp = new Date(Number(msg.payload.timestamp));
+
+          console.log(
+            `[WS EXECUTE] product_trace: Gọi api_controller.verifyTrace...`,
+          );
+          const res = await api_controller.verifyTrace(
+            db,
+            payload,
+            node_info,
+            timestamp,
+          );
+
+          console.log(`[WS RESULT] product_trace: verifyTrace trả về =`, res);
+
+          if (res) {
+            await ws.send(
+              JSON.stringify({
+                type: "Product_trace_respone",
+                requestId: msg.requestId,
+                sessionId: msg.sessionId,
+                ok: res.ok,
+                message: res.message,
+                block: res.block,
+                status: res.status,
+                time: Date.now(),
+              }),
+            );
+            console.log(
+              `[WS SUCCESS] product_trace: Đã gửi response thành công.`,
+            );
+          } else {
+            console.log(
+              `[WS ERROR] product_trace: verifyTrace trả về null/undefined.`,
+            );
+            await ws.send(
+              JSON.stringify({
+                type: "Product_trace_respone",
+                sessionId: session_id_current,
+                requestId: msg.requestId,
+                nodeId: node_info.node_id,
+                ok: false,
+                message: "Handle error: result is null",
+                status: "error",
+                time: Date.now(),
+              }),
+            );
+          }
+        } catch (error) {
+          console.error(`[WS CRASH] product_trace xảy ra exception:`, error);
+          await ws.send(
+            JSON.stringify({
+              type: "Product_trace_respone",
+              sessionId: session_id_current,
+              requestId: msg.requestId,
+              nodeId: node_info.node_id,
+              ok: false,
+              message: error.message || error,
+              status: "error",
+              time: Date.now(),
+            }),
+          );
+        }
+      }
+
+      if (msg.command == "ship_trace") {
+        console.log(
+          `\n[WS COMMAND] Nhận lệnh: ship_trace | RequestId: ${msg.requestId}`,
+        );
+        const payload = msg.payload?.payload;
+
+        try {
+          if (!payload) {
+            console.log(
+              `[WS ERROR] ship_trace: Payload bị thiếu! msg.payload =`,
+              msg.payload,
+            );
+            return await ws.send(
+              JSON.stringify({
+                type: "Ship_trace_respone",
+                sessionId: msg.sessionId,
+                requestId: msg.requestId,
+                ok: false,
+                message: "payload missing",
+                status: "data_missing",
+                time: Date.now(),
+              }),
+            );
+          }
+
+          console.log(
+            `[WS INFO] ship_trace: Payload hợp lệ. Đang parse timestamp...`,
+          );
+          const timestamp = new Date(Number(msg.payload.timestamp));
+
+          console.log(
+            `[WS EXECUTE] ship_trace: Gọi api_controller.verifyTrace...`,
+          );
+          const res = await api_controller.verifyTrace(
+            db,
+            payload,
+            node_info,
+            timestamp,
+          );
+
+          console.log(`[WS RESULT] ship_trace: verifyTrace trả về =`, res);
+
+          if (res) {
+            await ws.send(
+              JSON.stringify({
+                type: "Ship_trace_respone",
+                requestId: msg.requestId,
+                sessionId: msg.sessionId,
+                ok: res.ok,
+                message: res.message,
+                block: res.block,
+                status: res.status,
+                time: Date.now(),
+              }),
+            );
+            console.log(`[WS SUCCESS] ship_trace: Đã gửi response thành công.`);
+          } else {
+            console.log(
+              `[WS ERROR] ship_trace: verifyTrace trả về null/undefined.`,
+            );
+            await ws.send(
+              JSON.stringify({
+                type: "Ship_trace_respone",
+                sessionId: session_id_current,
+                requestId: msg.requestId,
+                nodeId: node_info.node_id,
+                ok: false,
+                message: "Handle error: result is null",
+                status: "error",
+                time: Date.now(),
+              }),
+            );
+          }
+        } catch (error) {
+          console.error(`[WS CRASH] ship_trace xảy ra exception:`, error);
+          await ws.send(
+            JSON.stringify({
+              type: "Ship_trace_respone",
+              sessionId: session_id_current,
+              requestId: msg.requestId,
+              nodeId: node_info.node_id,
+              ok: false,
+              message: error.message || error,
+              status: "error",
+              time: Date.now(),
+            }),
+          );
+        }
+      }
+      if (msg.command == "company_trace") {
+        console.log(
+          `\n[WS COMMAND] Nhận lệnh: ship_trace | RequestId: ${msg.requestId}`,
+        );
+        const payload = msg.payload?.payload;
+
+        try {
+          if (!payload) {
+            console.log(
+              `[WS ERROR] ship_trace: Payload bị thiếu! msg.payload =`,
+              msg.payload,
+            );
+            return await ws.send(
+              JSON.stringify({
+                type: "Company_trace_respone",
+                sessionId: msg.sessionId,
+                requestId: msg.requestId,
+                nodeId: node_info.node_id,
+                ok: false,
+                message: "payload missing",
+                status: "data_missing",
+                time: Date.now(),
+              }),
+            );
+          }
+
+          console.log(
+            `[WS INFO] ship_trace: Payload hợp lệ. Đang parse timestamp...`,
+          );
+          const timestamp = new Date(Number(msg.payload.timestamp));
+
+          console.log(
+            `[WS EXECUTE] ship_trace: Gọi api_controller.verifyTrace...`,
+          );
+          const res = await api_controller.verifyTrace(
+            db,
+            payload,
+            node_info,
+            timestamp,
+          );
+
+          console.log(`[WS RESULT] ship_trace: verifyTrace trả về =`, res);
+
+          if (res) {
+            await ws.send(
+              JSON.stringify({
+                type: "Company_trace_respone",
+                requestId: msg.requestId,
+                sessionId: msg.sessionId,
+                nodeId: node_info.node_id,
+                ok: res.ok,
+                message: res.message,
+                block: res.block,
+                status: res.status,
+                time: Date.now(),
+              }),
+            );
+            console.log(`[WS SUCCESS] ship_trace: Đã gửi response thành công.`);
+          } else {
+            console.log(
+              `[WS ERROR] ship_trace: verifyTrace trả về null/undefined.`,
+            );
+            await ws.send(
+              JSON.stringify({
+                type: "Company_trace_respone",
+                sessionId: session_id_current,
+                requestId: msg.requestId,
+                nodeId: node_info.node_id,
+                ok: false,
+                message: "Handle error: result is null",
+                status: "error",
+                time: Date.now(),
+              }),
+            );
+          }
+        } catch (error) {
+          console.error(`[WS CRASH] ship_trace xảy ra exception:`, error);
+          await ws.send(
+            JSON.stringify({
+              type: "Company_trace_respone",
+              sessionId: session_id_current,
+              requestId: msg.requestId,
+              nodeId: node_info.node_id,
+              ok: false,
+              message: error.message || error,
+              status: "error",
+              time: Date.now(),
+            }),
+          );
+        }
+      }
       if (msg.command == "drop_product") {
         const product_list = msg.payload.approvedIds;
         let drop_map = [];
@@ -225,7 +597,6 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
             }
           });
       }
-
       if (msg.command == "drop_precheck_vote") {
         const product_list = msg.payload.products;
 
@@ -268,23 +639,21 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
           );
         }
       }
-
       if (msg.command == "get_vote") {
-        let res = null;
         const requestId = msg.requestId;
         let payload = msg.payload;
+        console.log(
+          "payload nhận được từ MetaGateway cho lệnh get_vote: ",
+          payload,
+        );
 
         try {
-          if (payload.command_type === "new") {
-            res = api_controller.get_node_new_vote(
-              db,
-              payload.Public_key,
-              payload.Signature,
-              payload.client_hash,
-            );
-          } else {
-            res = api_controller.get_vote(db, payload);
-          }
+          const res = await api_controller.get_node_new_vote(
+            db,
+            payload.Public_key,
+            payload.Signature,
+            payload.client_hash,
+          );
 
           await ws.send(
             JSON.stringify({
@@ -341,6 +710,20 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
                 limit,
               );
 
+              if (!blocks || blocks?.blocks?.length < 1) {
+                return await ws.send(
+                  JSON.stringify({
+                    type: "get_block_response",
+                    nodeId: node_info.node_id,
+                    requestId: msg.requestId,
+                    sessionId: msg.sessionId,
+                    ok: false,
+                    node_type: "admin",
+                    blocks: [],
+                    time: Date.now(),
+                  }),
+                );
+              }
               return await ws.send(
                 JSON.stringify({
                   type: "get_block_response",
@@ -354,6 +737,7 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
                 }),
               );
             } catch (error) {
+              console.error(error);
               return await ws.send(
                 JSON.stringify({
                   type: "get_block_response",
@@ -372,7 +756,6 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
 
       if (msg.command === "pair_product") {
         const payload = msg.payload.payload;
-
         try {
           if (!payload) {
             return await ws.send(
@@ -389,7 +772,7 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
             );
           }
 
-          const timestamp = msg.payload.timestamp;
+          const timestamp = new Date(Number(msg.payload.timestamp));
           const res = await api_controller.create_new_block(
             db,
             payload,
@@ -455,17 +838,19 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
                 );
               }
 
-              const timestamp = msg.payload.timestamp;
+              const timestamp = new Date(Number(msg.payload.timestamp));
               const res = await api_controller.create_new_block(
                 db,
                 payload,
                 node_info,
                 timestamp,
               );
+
+              console.log("Kết quả create_new_block cho pair_other:", res);
               if (res && res.ok) {
                 await ws.send(
                   JSON.stringify({
-                    type: "pair_product_response",
+                    type: "pair_other_response",
                     nodeId: node_info.node_id,
                     requestId: msg.requestId,
                     sessionId: msg.sessionId,
@@ -477,11 +862,12 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
               } else {
                 await ws.send(
                   JSON.stringify({
-                    type: "pair_product_response",
+                    type: "pair_other_response",
                     sessionId: session_id_current,
                     requestId: msg.requestId,
                     nodeId: node_info.node_id,
                     ok: false,
+                    message: "handle error: result is null or not ok",
                     block: "",
                     time: Date.now(),
                   }),
@@ -490,11 +876,12 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
             } catch (error) {
               await ws.send(
                 JSON.stringify({
-                  type: "pair_product_response",
+                  type: "pair_other_response",
                   sessionId: session_id_current,
                   requestId: msg.requestId,
                   nodeId: node_info.node_id,
                   ok: false,
+                  message: error.message || error,
                   block: "",
                   time: Date.now(),
                 }),
@@ -504,7 +891,7 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
       }
       if (msg.command === "pair_user") {
         const payload = msg.payload.user;
-        const timestamp = msg.payload.timestamp;
+        const timestamp = new Date(Number(msg.payload.timestamp));
         nodeModeManager.blockCreationQueue =
           nodeModeManager.blockCreationQueue.then(async () => {
             try {
@@ -600,6 +987,8 @@ export const Active_route_ws = async (msg, ws, db, node_info) => {
       JSON.stringify({
         type: "client_log",
         command: `[ERROR] - [ADMIN] - [${node_info.node_id}]`,
+        sessionId: msg.sessionId,
+        requestId: msg.requestId,
         nodeId: node_info.node_id,
         message: error,
       }),
@@ -731,10 +1120,19 @@ export const sync_route_ws = async (msg, ws, db, node_info) => {
     const status = msg.status;
     const syncStatus = msg.sync_status;
 
+    console.log(
+      `\n[DEBUG sync_response] 📥 NHẬN ĐƯỢC PHẢN HỒI SYNC | Status: ${status} | SyncStatus: ${syncStatus} | Số block: ${msg.blocks?.length || 0}`,
+    );
+
     nodeModeManager.blockCreationQueue =
       nodeModeManager.blockCreationQueue.then(async () => {
         try {
+          console.log(`[DEBUG sync_response] ⚙️ Bắt đầu xử lý Queue Sync...`);
+
           if (!msg.ok) {
+            console.log(
+              `[DEBUG sync_response] ❌ LỖI TỪ SERVER: msg.ok = false (SyncStatus: ${syncStatus})`,
+            );
             await ws.send(
               JSON.stringify({
                 type: "client_log",
@@ -746,11 +1144,17 @@ export const sync_route_ws = async (msg, ws, db, node_info) => {
             if (syncStatus != "node_outlaw") {
               runtimeState._syncRetryCount++;
               runtimeState._isSendSyncRequest = false;
+              console.log(
+                `[DEBUG sync_response]   Tăng retryCount lên ${runtimeState._syncRetryCount}, Gỡ cờ _isSendSyncRequest.`,
+              );
             }
             return;
           }
 
           if (status === "fork") {
+            console.log(
+              `[DEBUG sync_response] ⚠️ PHÁT HIỆN FORK TỪ MẠNG LƯỚI! Đang chuyển trạng thái Node sang chế độ fork.`,
+            );
             await ws.send(
               JSON.stringify({
                 type: "client_log",
@@ -766,6 +1170,9 @@ export const sync_route_ws = async (msg, ws, db, node_info) => {
 
           const blocks = msg.blocks;
           if (!Array.isArray(blocks) || blocks.length === 0) {
+            console.log(
+              `[DEBUG sync_response] 📭 Gói tin không có Block nào (Mảng rỗng)! Tăng retry và kết thúc chu kỳ.`,
+            );
             runtimeState._isSendSyncRequest = false;
             runtimeState._syncRetryCount++;
             return;
@@ -776,24 +1183,41 @@ export const sync_route_ws = async (msg, ws, db, node_info) => {
           let expectedHeight = (latest_block?.Height ?? 0) + 1;
           let expectedPrevHash = latest_block?.Hash ?? "GENESIS";
 
+          console.log(
+            `[DEBUG sync_response] 🔍 KIỂM TRA DB: Đang có Height = ${latest_block?.Height ?? 0} | Đợi chèn Block Height tiếp theo = ${expectedHeight}`,
+          );
+
           for (const b of blocks) {
             if (
               b.Height != expectedHeight ||
               b.PreviousHash != expectedPrevHash
             ) {
+              console.log(
+                `[DEBUG sync_response] 🚨 LỆCH CHAIN (FORK CỤC BỘ) TẠI BLOCK ${b.Height}!`,
+              );
+              console.log(
+                `   - Block gửi về: Height = ${b.Height}, PrevHash = ${b.PreviousHash}`,
+              );
+              console.log(
+                `   - DB đang đợi : Height = ${expectedHeight}, PrevHash = ${expectedPrevHash}`,
+              );
               runtimeState._isSendSyncRequest = false;
               await nodeModeManager.setMode("fork", db);
               return;
             }
 
-            const new_block = await api_controller.create_new_block(
+            console.log(
+              `[DEBUG sync_response] ✍️ Đang lưu Block Height: ${b.Height} vào cơ sở dữ liệu...`,
+            );
+            const new_block = await api_controller.sync_block_from_network(
               db,
               b,
-              node_info,
-              b.Timestamp,
             );
 
             if (!new_block.ok) {
+              console.log(
+                `[DEBUG sync_response] ❌ LỖI LƯU BLOCK tại Height ${b.Height}. Node từ chối ghi dữ liệu này!`,
+              );
               runtimeState._isSendSyncRequest = false;
               return;
             }
@@ -802,10 +1226,17 @@ export const sync_route_ws = async (msg, ws, db, node_info) => {
           }
 
           const valid_status = syncStatus === "complate" ? "active" : "syncing";
+          console.log(
+            `[DEBUG sync_response]   ĐÃ ĐỒNG BỘ THÀNH CÔNG ${blocks.length} BLOCKS. Cập nhật Mode thành: ${valid_status}`,
+          );
+
           await nodeModeManager.setMode(valid_status, db);
           runtimeState._isSendSyncRequest = false;
         } catch (error) {
-          console.error("[SYNC QUEUE ERROR]", error);
+          console.error(
+            "\n[DEBUG sync_response] 💥 LỖI EXCEPTION TRONG QUEUE:",
+            error,
+          );
           runtimeState._isSendSyncRequest = false;
         }
       });
